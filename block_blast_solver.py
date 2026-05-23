@@ -262,7 +262,6 @@ def solve(
         if not pos0:
             continue
         pos0.sort(key=lambda rc: _quick_place_score(board, p0, rc[0], rc[1]), reverse=True)
-        pos0 = pos0[:25]
 
         for r0, c0 in pos0:
             b1, s0, stk1, ps1, lc0, se0 = apply_placement(
