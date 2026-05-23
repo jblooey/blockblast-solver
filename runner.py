@@ -560,39 +560,40 @@ def run_with_overlay_fast(
     pieces: List[Piece],
     cal: dict,
 ) -> Board:
-    """Show all 3 moves at once (green/yellow/red) and wait for a single Enter."""
+    """Step-by-step overlay. After the last Enter, returns immediately to trigger next scan."""
     from overlay import BoardOverlay, _wait_for_enter
     from block_blast_solver import place_piece, clear_lines as bl_clear_lines
 
-    overlay = BoardOverlay(cal)
-
-    # Print all 3 steps at once in terminal
     print(f"\n  Score gain: {result_score:.0f}")
     print_divider("-")
+
+    overlay = BoardOverlay(cal)
+    board = initial_board
+
     for step, move in enumerate(moves):
-        tag = ["[1] green", "[2] yellow", "[3] red"][step]
-        print(f"  {tag}  Piece {move.piece_idx + 1}  →  Row {move.row + 1}, Col {move.col + 1}", end="")
+        piece = pieces[move.piece_idx]
+        placed = place_piece(board, piece, move.row, move.col)
+
+        print(f"\n  Step {step + 1}: Piece {move.piece_idx + 1}"
+              f"  →  Row {move.row + 1}, Col {move.col + 1}", end="")
         if move.lines_cleared > 0:
             word = "line" if move.lines_cleared == 1 else "lines"
-            print(f"   [{move.lines_cleared} {word} cleared!]", end="")
+            print(f"   [{move.lines_cleared} {word.upper()} cleared!]", end="")
         if move.streak_event == "saved":
             print("  *** STREAK SAVED ***", end="")
         elif move.streak_event == "broken":
             print("  *** STREAK BROKEN ***", end="")
         print()
 
-    overlay.show_all_steps(moves, pieces)
-    _wait_for_enter(overlay.root)
+        overlay.show_step_and_wait(step, move, piece, placed)
+
+        cleared_board, _, _ = bl_clear_lines(placed)
+        board = cleared_board
+
     overlay.clear()
     overlay.close()
 
-    # Compute final board by replaying all moves
-    board = initial_board
-    for move in moves:
-        piece = pieces[move.piece_idx]
-        placed = place_piece(board, piece, move.row, move.col)
-        board, _, _ = bl_clear_lines(placed)
-
+    print()
     print_divider("-")
     final = moves[-1]
     if final.streak_after > 0:
@@ -601,6 +602,7 @@ def run_with_overlay_fast(
     else:
         print("  No active streak after these moves.")
     print_divider()
+    print("  Scanning next round...")
     return board
 
 
@@ -765,17 +767,18 @@ def main() -> None:
         psince = moves[-1].placements_since_after
         round_num += 1
 
-        print()
-        cont = input("  Press Enter for next round (q to quit): ").strip().lower()
-        if cont == "q":
-            print(f"\n  Final score: {game_score}")
-            ans = input("  Save score to tracker? (y/n): ").strip().lower()
-            if ans == "y":
-                _save_game(game_score, streak_broken_after_10)
-                print("  Saved!")
-            _print_tracker(_load_scores())
-            print("\nGood game!")
-            break
+        if not fast_mode:
+            print()
+            cont = input("  Press Enter for next round (q to quit): ").strip().lower()
+            if cont == "q":
+                print(f"\n  Final score: {game_score}")
+                ans = input("  Save score to tracker? (y/n): ").strip().lower()
+                if ans == "y":
+                    _save_game(game_score, streak_broken_after_10)
+                    print("  Saved!")
+                _print_tracker(_load_scores())
+                print("\nGood game!")
+                break
 
         if not cal:
             board_override = input_board()
