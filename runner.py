@@ -1,3 +1,4 @@
+import argparse
 import json
 import sys
 from datetime import date
@@ -586,9 +587,21 @@ def _auto_detect_round(cal: dict):
     return board, pieces
 
 
+def _detect_pieces_only(cal: dict) -> List[Optional[Piece]]:
+    """Scan just the piece slots — skips the board region entirely."""
+    from screen_reader import take_screenshot, detect_pieces
+    img = take_screenshot()
+    return detect_pieces(img, cal)
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--fast", action="store_true")
+    args, _ = parser.parse_known_args()
+    fast_mode = args.fast
+
     print_divider()
-    print("         BLOCK BLAST SOLVER")
+    print("         BLOCK BLAST SOLVER" + ("  [FAST]" if fast_mode else ""))
     print_divider()
     _print_tracker(_load_scores())
     print()
@@ -608,6 +621,7 @@ def main() -> None:
     game_score             = 0
     round_num              = 1
     streak_broken_after_10 = False
+    board: Optional[Board] = None  # carried over between rounds in fast mode
 
     if not cal:
         board_override = input_board()
@@ -620,11 +634,19 @@ def main() -> None:
         print(f"{'='*52}")
 
         if cal:
-            # Fast auto mode — one screenshot, no confirmations
-            print("  Detecting from screen...")
-            board, detected_pieces = _auto_detect_round(cal)
-            print()
-            print_board(board)
+            skip_board_scan = fast_mode and board is not None
+
+            if skip_board_scan:
+                # Reuse the computed board from last round — only scan pieces
+                print("  Scanning pieces...")
+                detected_pieces = _detect_pieces_only(cal)
+                print("\n  Board (carried over):")
+                print_board(board)
+            else:
+                print("  Detecting from screen...")
+                board, detected_pieces = _auto_detect_round(cal)
+                print()
+                print_board(board)
 
             pieces: List[Piece] = []
             for i, ap in enumerate(detected_pieces):
