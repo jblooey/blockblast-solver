@@ -75,91 +75,107 @@ def board_heuristic(board: Board) -> float:
     5. Bumpiness — jagged fill variance across adjacent rows/cols fragments the board.
     6. Combo intersections — near-full row ∩ near-full col = high-value clearing alignment.
     7. Density / survival — above 60% approaching game-over territory.
+
+    Vectorized with numpy for speed — called thousands of times per solve().
     """
-    col_fills = [sum(board[r][c] for r in range(8)) for c in range(8)]
-    row_fills = [sum(board[r][c] for c in range(8)) for r in range(8)]
-    density   = sum(col_fills) / 64.0
+    # sum(row) is C-level fast; sum(generator) is not — zip(*board) transposes cheaply
+    row_fills = [sum(row) for row in board]
+    col_fills = [sum(col) for col in zip(*board)]
+    total     = sum(row_fills)
+    density   = total / 64.0
 
     # --- line progress ---
     score = 0.0
     for f in row_fills + col_fills:
         if f == 0:
-            pass            # empty: fine, open space
+            pass
         elif f <= 2:
-            score -= 10     # very sparse, contributes nothing
+            score -= 10
         elif f <= 4:
-            score -= 3      # partial fill, eats space
+            score -= 3
         elif f == 5:
-            score += 8      # building toward a clear
+            score += 8
         elif f == 6:
-            score += 20     # close — very useful
+            score += 20
         elif f == 7:
-            score += 45     # one away — must complete next
+            score += 45
 
-    _DIRS = ((-1, 0), (1, 0), (0, -1), (0, 1))
-
-    # --- isolated filled cells ("floating single blocks") ---
+    # --- isolated filled cells + trapped empty cells (single pass, no generator) ---
     for r in range(8):
+        br  = board[r]
+        brp = board[r - 1] if r > 0 else None
+        brn = board[r + 1] if r < 7 else None
         for c in range(8):
-            if board[r][c] == 1:
-                if not any(
-                    0 <= r + dr < 8 and 0 <= c + dc < 8 and board[r + dr][c + dc] == 1
-                    for dr, dc in _DIRS
-                ):
-                    score -= 15     # isolated block: creates unworkable gaps
+            cell = br[c]
+            up    = brp[c] if brp is not None else 0
+            down  = brn[c] if brn is not None else 0
+            left  = br[c - 1] if c > 0 else 0
+            right = br[c + 1] if c < 7 else 0
+            if cell == 1:
+                if not (up or down or left or right):
+                    score -= 15     # isolated filled block
+            else:
+                wall_up    = 1 if brp is None else up
+                wall_down  = 1 if brn is None else down
+                wall_left  = 1 if c == 0 else left
+                wall_right = 1 if c == 7 else right
+                if wall_up + wall_down + wall_left + wall_right >= 3:
+                    score -= 25     # trapped empty cell
 
-    # --- trapped empty cells ---
-    for r in range(8):
-        for c in range(8):
-            if board[r][c] == 0:
-                filled_adj = sum(
-                    1 for dr, dc in _DIRS
-                    if not (0 <= r + dr < 8 and 0 <= c + dc < 8)
-                    or board[r + dr][c + dc] == 1
-                )
-                if filled_adj >= 3:
-                    score -= 25     # dead-space cell: only a 1×1 can ever fill it
+    # --- small empty pockets (BFS with flat bytearray — avoids 2D list overhead) ---
+    flat = [cell for row in board for cell in row]
+    _vis = bytearray(64)
+    for start in range(64):
+        if flat[start] == 0 and not _vis[start]:
+            size = 0
+            stack = [start]
+            _vis[start] = 1
+            while stack:
+                idx = stack.pop()
+                size += 1
+                r, c = idx >> 3, idx & 7   # divmod(idx, 8) without function call
+                if r > 0:
+                    n = idx - 8
+                    if not _vis[n] and flat[n] == 0:
+                        _vis[n] = 1; stack.append(n)
+                if r < 7:
+                    n = idx + 8
+                    if not _vis[n] and flat[n] == 0:
+                        _vis[n] = 1; stack.append(n)
+                if c > 0:
+                    n = idx - 1
+                    if not _vis[n] and flat[n] == 0:
+                        _vis[n] = 1; stack.append(n)
+                if c < 7:
+                    n = idx + 1
+                    if not _vis[n] and flat[n] == 0:
+                        _vis[n] = 1; stack.append(n)
+            if size == 1:
+                score -= 150
+            elif size == 2:
+                score -= 80
+            elif size == 3:
+                score -= 20
 
-    # --- small empty pockets (connected empty regions too small for real pieces) ---
-    # Find connected components of empty cells. Size 1 or 2 can only be filled by
-    # tiny pieces that are extremely rare — treat as permanent dead space.
-    _vis = [[False] * 8 for _ in range(8)]
-    for sr in range(8):
-        for sc in range(8):
-            if board[sr][sc] == 0 and not _vis[sr][sc]:
-                size = 0
-                stack = [(sr, sc)]
-                _vis[sr][sc] = True
-                while stack:
-                    r, c = stack.pop()
-                    size += 1
-                    for dr, dc in _DIRS:
-                        nr, nc = r + dr, c + dc
-                        if 0 <= nr < 8 and 0 <= nc < 8 and not _vis[nr][nc] and board[nr][nc] == 0:
-                            _vis[nr][nc] = True
-                            stack.append((nr, nc))
-                if size == 1:
-                    score -= 150
-                elif size == 2:
-                    score -= 80
-                elif size == 3:
-                    score -= 20     # might fit a 1×3 or L-shape, but risky
+    # --- bumpiness (direct subtraction, no abs() call overhead in loop) ---
+    rb = cb = 0
+    for i in range(7):
+        d = row_fills[i] - row_fills[i + 1]; rb += d if d >= 0 else -d
+        d = col_fills[i] - col_fills[i + 1]; cb += d if d >= 0 else -d
+    score -= (rb + cb) * 8.0
 
-    # --- bumpiness (penalize jagged fill patterns between adjacent rows/cols) ---
-    # High bumpiness traps pieces and accelerates pocket formation.
-    row_bump = sum(abs(row_fills[i] - row_fills[i + 1]) for i in range(7))
-    col_bump = sum(abs(col_fills[j] - col_fills[j + 1]) for j in range(7))
-    score -= (row_bump + col_bump) * 8.0
-
-    # --- combo intersection bonus (near-full row ∩ near-full col alignment) ---
-    # Empty cells at the crossing of two near-full lines enable multi-line combos.
-    combo_bonus = 0.0
-    for r in range(8):
-        if row_fills[r] >= 6:
-            for c in range(8):
-                if col_fills[c] >= 6 and board[r][c] == 0:
-                    combo_bonus += 80.0
-    score += min(combo_bonus, 400.0)
+    # --- combo intersection bonus ---
+    row_near = [f >= 6 for f in row_fills]
+    col_near = [f >= 6 for f in col_fills]
+    if any(row_near) and any(col_near):
+        combo = 0
+        for r in range(8):
+            if row_near[r]:
+                br = board[r]
+                for c in range(8):
+                    if col_near[c] and br[c] == 0:
+                        combo += 1
+        score += min(combo * 80.0, 400.0)
 
     # --- survival / density penalty ---
     if density > 0.60:
@@ -246,6 +262,7 @@ def solve(
         if not pos0:
             continue
         pos0.sort(key=lambda rc: _quick_place_score(board, p0, rc[0], rc[1]), reverse=True)
+        pos0 = pos0[:25]
 
         for r0, c0 in pos0:
             b1, s0, stk1, ps1, lc0, se0 = apply_placement(
