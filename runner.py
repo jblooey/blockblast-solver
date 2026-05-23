@@ -507,7 +507,7 @@ def run_with_overlay(
     cal: dict,
 ) -> Board:
     """Show move indicators overlaid on the screen and advance step by step."""
-    from overlay import BoardOverlay
+    from overlay import BoardOverlay, _wait_for_enter
     from block_blast_solver import place_piece, clear_lines as bl_clear_lines
 
     print(f"\n  Score gain: {result_score:.0f}")
@@ -542,6 +542,57 @@ def run_with_overlay(
     overlay.close()
 
     print()
+    print_divider("-")
+    final = moves[-1]
+    if final.streak_after > 0:
+        remain = 3 - final.placements_since_after
+        print(f"  Streak: {final.streak_after} | {remain} placement(s) before it breaks next turn.")
+    else:
+        print("  No active streak after these moves.")
+    print_divider()
+    return board
+
+
+def run_with_overlay_fast(
+    result_score: float,
+    moves: List[Move],
+    initial_board: Board,
+    pieces: List[Piece],
+    cal: dict,
+) -> Board:
+    """Show all 3 moves at once (green/yellow/red) and wait for a single Enter."""
+    from overlay import BoardOverlay, _wait_for_enter
+    from block_blast_solver import place_piece, clear_lines as bl_clear_lines
+
+    overlay = BoardOverlay(cal)
+
+    # Print all 3 steps at once in terminal
+    print(f"\n  Score gain: {result_score:.0f}")
+    print_divider("-")
+    for step, move in enumerate(moves):
+        tag = ["[1] green", "[2] yellow", "[3] red"][step]
+        print(f"  {tag}  Piece {move.piece_idx + 1}  →  Row {move.row + 1}, Col {move.col + 1}", end="")
+        if move.lines_cleared > 0:
+            word = "line" if move.lines_cleared == 1 else "lines"
+            print(f"   [{move.lines_cleared} {word} cleared!]", end="")
+        if move.streak_event == "saved":
+            print("  *** STREAK SAVED ***", end="")
+        elif move.streak_event == "broken":
+            print("  *** STREAK BROKEN ***", end="")
+        print()
+
+    overlay.show_all_steps(moves, pieces)
+    _wait_for_enter(overlay.root)
+    overlay.clear()
+    overlay.close()
+
+    # Compute final board by replaying all moves
+    board = initial_board
+    for move in moves:
+        piece = pieces[move.piece_idx]
+        placed = place_piece(board, piece, move.row, move.col)
+        board, _, _ = bl_clear_lines(placed)
+
     print_divider("-")
     final = moves[-1]
     if final.streak_after > 0:
@@ -647,7 +698,8 @@ def main() -> None:
                 print()
                 print_board(board)
 
-            while True:
+            if fast_mode:
+                # No prompt — display pieces and solve immediately
                 pieces: List[Piece] = []
                 for i, ap in enumerate(detected_pieces):
                     if ap is not None:
@@ -658,13 +710,25 @@ def main() -> None:
                     else:
                         print(f"\n  Piece {i + 1}: not detected — pick manually")
                         pieces.append(input_piece(i + 1))
+            else:
+                while True:
+                    pieces = []
+                    for i, ap in enumerate(detected_pieces):
+                        if ap is not None:
+                            print(f"\n  Piece {i + 1}:")
+                            for row in render_piece_block(ap):
+                                print(f"    {row}")
+                            pieces.append(list(ap))
+                        else:
+                            print(f"\n  Piece {i + 1}: not detected — pick manually")
+                            pieces.append(input_piece(i + 1))
 
-                cmd = input("\n  Enter to solve   r = re-scan pieces: ").strip().lower()
-                if cmd == "r":
-                    print("  Re-scanning pieces...")
-                    detected_pieces = _detect_pieces_only(cal)
-                else:
-                    break
+                    cmd = input("\n  Enter to solve   r = re-scan pieces: ").strip().lower()
+                    if cmd == "r":
+                        print("  Re-scanning pieces...")
+                        detected_pieces = _detect_pieces_only(cal)
+                    else:
+                        break
         else:
             board = board_override
             pieces = []
@@ -678,7 +742,9 @@ def main() -> None:
             print("\nNo valid move sequence found. Board may be too full.")
             sys.exit(1)
 
-        if use_overlay:
+        if use_overlay and fast_mode:
+            board = run_with_overlay_fast(result_score, moves, board, pieces, cal)
+        elif use_overlay:
             board = run_with_overlay(result_score, moves, board, pieces, cal)
         else:
             board = print_results(result_score, moves, board, pieces)

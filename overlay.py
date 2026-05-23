@@ -11,11 +11,18 @@ import select
 import tkinter as tk
 from typing import List, Set, Tuple
 
-# (fill color, text color) per step
+# (fill color, text color) per step — normal mode
 STEP_COLORS = [
     ("#00E676", "#000000"),  # step 1 — bright green
     ("#FF9100", "#000000"),  # step 2 — orange
     ("#40C4FF", "#000000"),  # step 3 — light blue
+]
+
+# Colors for the all-at-once fast overlay
+FAST_COLORS = [
+    ("#00E676", "#000000"),  # 1 — green
+    ("#FFE500", "#000000"),  # 2 — yellow
+    ("#FF1744", "#FFFFFF"),  # 3 — red
 ]
 CLEAR_DASH_COLOR = "#FFFFFF"
 
@@ -184,6 +191,37 @@ class BoardOverlay:
             x1 - pad, y1 - pad, x2 + pad, y2 + pad,
             outline=color, fill="", width=4,
         )
+        self.root.update()
+
+    def show_all_steps(self, moves, pieces: list) -> None:
+        """Draw all 3 moves at once. Green=1st, Yellow=2nd, Red=3rd."""
+        self.canvas.delete("all")
+        pad = 4
+        font_size = max(10, int(min(self.cell_w, self.cell_h) * 0.40))
+
+        for step, move in enumerate(moves):
+            piece = pieces[move.piece_idx]
+            fill, text_color = FAST_COLORS[step % len(FAST_COLORS)]
+            piece_cells = [(move.row + dr, move.col + dc) for dr, dc in piece]
+
+            for r, c in piece_cells:
+                x1, y1, x2, y2 = self._cell_bbox(r, c)
+                self.canvas.create_rectangle(
+                    x1 + pad + 2, y1 + pad + 2, x2 - pad + 2, y2 - pad + 2,
+                    fill="black", outline="",
+                )
+                self.canvas.create_rectangle(
+                    x1 + pad, y1 + pad, x2 - pad, y2 - pad,
+                    fill=fill, outline="white", width=2,
+                )
+                self.canvas.create_text(
+                    (x1 + x2) // 2, (y1 + y2) // 2,
+                    text=str(step + 1), fill=text_color,
+                    font=("Arial", font_size, "bold"),
+                )
+
+            self._highlight_piece_slot(move.piece_idx, fill)
+
         self.root.update()
 
     def clear(self) -> None:
