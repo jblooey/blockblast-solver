@@ -637,7 +637,6 @@ def main() -> None:
             skip_board_scan = fast_mode and board is not None
 
             if skip_board_scan:
-                # Reuse the computed board from last round — only scan pieces
                 print("  Scanning pieces...")
                 detected_pieces = _detect_pieces_only(cal)
                 print("\n  Board (carried over):")
@@ -648,16 +647,24 @@ def main() -> None:
                 print()
                 print_board(board)
 
-            pieces: List[Piece] = []
-            for i, ap in enumerate(detected_pieces):
-                if ap is not None:
-                    print(f"\n  Piece {i + 1}:")
-                    for row in render_piece_block(ap):
-                        print(f"    {row}")
-                    pieces.append(list(ap))
+            while True:
+                pieces: List[Piece] = []
+                for i, ap in enumerate(detected_pieces):
+                    if ap is not None:
+                        print(f"\n  Piece {i + 1}:")
+                        for row in render_piece_block(ap):
+                            print(f"    {row}")
+                        pieces.append(list(ap))
+                    else:
+                        print(f"\n  Piece {i + 1}: not detected — pick manually")
+                        pieces.append(input_piece(i + 1))
+
+                cmd = input("\n  Enter to solve   r = re-scan pieces: ").strip().lower()
+                if cmd == "r":
+                    print("  Re-scanning pieces...")
+                    detected_pieces = _detect_pieces_only(cal)
                 else:
-                    print(f"\n  Piece {i + 1}: not detected — pick manually")
-                    pieces.append(input_piece(i + 1))
+                    break
         else:
             board = board_override
             pieces = []
